@@ -1,0 +1,16 @@
+# One line-ending rule for every machine, so a clone at home and a clone at
+# work agree byte-for-byte and git status stops reporting phantom changes.
+# Text is LF in the repository and in the working tree; Windows tools cope.
+* text=auto eol=lf
+
+# Binaries, never normalised.
+*.png binary
+*.jpg binary
+*.ico binary
+*.mp4 binary
+*.exe binary
+*.dll binary
+*.pyd binary
+*.enc binary
+*.gz binary
+*.bundle binary
