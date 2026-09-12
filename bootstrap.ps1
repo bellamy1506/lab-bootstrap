@@ -147,14 +147,25 @@ $cur | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding utf8
 # ADOPTION step 9: a guard nobody has seen refuse is not yet a guard. The
 # summary line is the point; a failure here is reported, not fatal, because
 # the machine is set up either way and the line says what to look at.
+# Under $ErrorActionPreference = Stop, PowerShell 5.1 turns any stderr line
+# from a native command piped through 2>&1 into a terminating error; the
+# test's harmless "NOTE: ..." killed the script before step 5 (2026-09-12).
+# Continue for this one call; the exit code is the verdict.
 Step "framework self-test (python tests/framework/test_hooks.py)"
-python (Join-Path $fw "tests\framework\test_hooks.py") 2>&1 | Select-Object -Last 1
+$eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+python (Join-Path $fw "tests\framework\test_hooks.py") 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 1
+if ($LASTEXITCODE -ne 0) { Write-Host "    self-test exit $LASTEXITCODE - look at the output above" -ForegroundColor Yellow }
+$ErrorActionPreference = $eap
 
 # ---- 5. optional: a lab run ------------------------------------------------
 if ($Lab -ne "") {
   Step "lab run $Lab-lab"
-  python $repoPy new-run "$Lab-lab" --yes
-  if ($LASTEXITCODE -ne 0) { throw "new-run failed." }
+  if (Test-Path (Join-Path $Projects "$Lab-lab\.git")) {
+    Write-Host "    already cloned; nothing to do"
+  } else {
+    python $repoPy new-run "$Lab-lab" --yes
+    if ($LASTEXITCODE -ne 0) { throw "new-run failed." }
+  }
   Write-Host ""
   Write-Host "Ready. Open Claude Code in: $(Join-Path $Projects "$Lab-lab")" -ForegroundColor Green
 } else {
