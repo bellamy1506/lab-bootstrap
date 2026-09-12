@@ -125,6 +125,22 @@ if (-not $cur.PSObject.Properties["permissions"]) { $cur | Add-Member -NotePrope
 if (-not $cur.permissions.PSObject.Properties["allow"]) { $cur.permissions | Add-Member -NotePropertyName allow -NotePropertyValue @() }
 $allow = @($cur.permissions.allow) + @($src.permissions.allow) | Select-Object -Unique
 $cur.permissions.allow = $allow
+# Hooks: the framework's SessionStart/Stop entries (pull and push the framework
+# and the skills when safe). Appended, never replacing what the profile has;
+# an entry whose command is already present is not added twice, so re-running
+# the bootstrap is idempotent.
+if ($src.PSObject.Properties["hooks"]) {
+  if (-not $cur.PSObject.Properties["hooks"]) { $cur | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]@{}) }
+  foreach ($ev in $src.hooks.PSObject.Properties.Name) {
+    if (-not $cur.hooks.PSObject.Properties[$ev]) { $cur.hooks | Add-Member -NotePropertyName $ev -NotePropertyValue @() }
+    $have = @(@($cur.hooks.$ev) | ForEach-Object { @($_.hooks) } | ForEach-Object { $_.command })
+    foreach ($entry in @($src.hooks.$ev)) {
+      $cmds = @(@($entry.hooks) | ForEach-Object { $_.command })
+      $dup = @($cmds | Where-Object { $have -contains $_ })
+      if ($dup.Count -eq 0) { $cur.hooks.$ev = @(@($cur.hooks.$ev) + @($entry)) }
+    }
+  }
+}
 $cur | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding utf8
 
 # ---- 4b. prove the guards fire ---------------------------------------------
