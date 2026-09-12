@@ -29,7 +29,10 @@ With a lab run:
 
 ## What it does, in order
 
-1. Installs Git, GitHub CLI and Python 3.12 with winget (skips what exists),
+1. Installs Git, GitHub CLI and Python 3.12 with winget (skips what exists;
+   any Python 3.10 or newer already on PATH is used as it is, and each run
+   gets its own `.venv` with pytest and ruff, so the machine's Python only
+   has to exist),
    then pytest and ruff with pip - the framework's gates call both, and a
    machine without them accepts no card and lints no write.
 2. `gh auth login --web` - the browser click - and wires git to it.
