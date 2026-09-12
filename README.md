@@ -29,7 +29,9 @@ With a lab run:
 
 ## What it does, in order
 
-1. Installs Git, GitHub CLI and Python 3.12 with winget (skips what exists).
+1. Installs Git, GitHub CLI and Python 3.12 with winget (skips what exists),
+   then pytest and ruff with pip - the framework's gates call both, and a
+   machine without them accepts no card and lints no write.
 2. `gh auth login --web` - the browser click - and wires git to it.
 3. Clones `lab-framework`, then every other repository by its category
    (`python scripts/repo.py home` decides where): skills into
@@ -40,7 +42,13 @@ With a lab run:
 5. With `-Lab NAME`: `repo.py new-run NAME-lab --yes` - the private repo,
    the clone, the push.
 
-Re-running is safe; every step checks before it acts. Windows only.
+6. Runs the framework's own guard tests and prints their summary line.
+
+`-FrameworkRef <tag-or-commit>` pins `lab-framework` to a known state instead
+of `master`, so one bad push cannot break every future bootstrap.
+
+Re-running is safe; every step checks before it acts. Windows only, by the
+owner's decision (D-02 in the lab): the only platform he uses.
 
 ## For Claude, reading this on a fresh machine
 

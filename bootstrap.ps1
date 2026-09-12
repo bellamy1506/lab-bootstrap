@@ -21,6 +21,12 @@
   Redirects everything (projects, skills, ~/.claude) under this directory.
   For testing the bootstrap without touching the real profile.
 
+.PARAMETER FrameworkRef
+  A tag or commit of lab-framework to check out instead of master, so one
+  bad push cannot break every future bootstrap. Default master, because
+  pull-when-you-start is the owner's workflow; pin when handing the
+  sentence to a machine that must match a known state.
+
 .EXAMPLE
   irm https://raw.githubusercontent.com/bellamy1506/lab-bootstrap/master/bootstrap.ps1 | iex
   # or, with a lab:
@@ -29,7 +35,8 @@
 [CmdletBinding()]
 param(
   [string]$Lab = "",
-  [string]$Root = ""
+  [string]$Root = "",
+  [string]$FrameworkRef = "master"
 )
 $ErrorActionPreference = "Stop"
 $Account = "bellamy1506"
@@ -58,6 +65,14 @@ $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [En
 if (-not (Have gh)) { $env:Path += ";C:\Program Files\GitHub CLI" }
 foreach ($c in @("git", "gh", "python")) { if (-not (Have $c)) { throw "$c still not on PATH after install; open a new terminal and re-run." } }
 
+# ---- 1b. the runners the framework's gates call ---------------------------
+# The first machine bootstrapped without these (2026-09-11) had no pytest and
+# no ruff: accept.py could verify nothing and the per-write lint hook was
+# inert. Both are what every card's Done-when names.
+Step "python runners (pytest, ruff)"
+python -m pip install --quiet --user pytest ruff
+if ($LASTEXITCODE -ne 0) { throw "pip could not install pytest and ruff; install them by hand and re-run." }
+
 # ---- 2. GitHub login (browser; nothing typed here) -------------------------
 Step "github login"
 gh auth status 2>$null | Out-Null
@@ -76,6 +91,13 @@ $fw = Join-Path $Projects $Framework
 if (-not (Test-Path (Join-Path $fw ".git"))) {
   git clone -q "https://github.com/$Account/$Framework.git" $fw
 }
+if ($FrameworkRef -ne "master") {
+  Step "  framework pinned to $FrameworkRef"
+  git -C $fw fetch -q --tags
+  git -C $fw checkout -q $FrameworkRef
+  if ($LASTEXITCODE -ne 0) { throw "lab-framework has no ref '$FrameworkRef'." }
+}
+Write-Host "    lab-framework at $(git -C $fw rev-parse --short HEAD)"
 git -C $fw config core.hooksPath .githooks
 $repoPy = Join-Path $fw "scripts\repo.py"
 # home prints "git clone URL TARGET" lines with ~ paths; run each not yet present.
@@ -104,6 +126,13 @@ if (-not $cur.permissions.PSObject.Properties["allow"]) { $cur.permissions | Add
 $allow = @($cur.permissions.allow) + @($src.permissions.allow) | Select-Object -Unique
 $cur.permissions.allow = $allow
 $cur | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding utf8
+
+# ---- 4b. prove the guards fire ---------------------------------------------
+# ADOPTION step 9: a guard nobody has seen refuse is not yet a guard. The
+# summary line is the point; a failure here is reported, not fatal, because
+# the machine is set up either way and the line says what to look at.
+Step "framework self-test (python tests/test_hooks.py)"
+python (Join-Path $fw "tests\test_hooks.py") 2>&1 | Select-Object -Last 1
 
 # ---- 5. optional: a lab run ------------------------------------------------
 if ($Lab -ne "") {
