@@ -131,8 +131,8 @@ $cur | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding utf8
 # ADOPTION step 9: a guard nobody has seen refuse is not yet a guard. The
 # summary line is the point; a failure here is reported, not fatal, because
 # the machine is set up either way and the line says what to look at.
-Step "framework self-test (python tests/test_hooks.py)"
-python (Join-Path $fw "tests\test_hooks.py") 2>&1 | Select-Object -Last 1
+Step "framework self-test (python tests/framework/test_hooks.py)"
+python (Join-Path $fw "tests\framework\test_hooks.py") 2>&1 | Select-Object -Last 1
 
 # ---- 5. optional: a lab run ------------------------------------------------
 if ($Lab -ne "") {
