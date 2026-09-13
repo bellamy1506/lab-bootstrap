@@ -111,6 +111,14 @@ foreach ($ln in $lines) {
   $url = $parts[2]; $target = $parts[3]
   $target = $target -replace "^~", $Root
   if (-not (Test-Path (Join-Path $target ".git"))) {
+    # A directory at the target that is not a clone: the skills directory
+    # from before 2026-09-13 held one clone per skill. Moved aside, never
+    # deleted; the clone then lands where the framework expects it.
+    if ((Test-Path $target) -and (Get-ChildItem $target -Force | Measure-Object).Count -gt 0) {
+      $aside = "$target-old-$(Get-Date -Format yyyy-MM-dd)"
+      Step "  $target is not a clone; moving it to $aside"
+      Move-Item $target $aside
+    }
     Step "  clone $url -> $target"
     New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
     git clone -q $url $target
@@ -129,6 +137,13 @@ if (-not $cur.PSObject.Properties["permissions"]) { $cur | Add-Member -NotePrope
 if (-not $cur.permissions.PSObject.Properties["allow"]) { $cur.permissions | Add-Member -NotePropertyName allow -NotePropertyValue @() }
 $allow = @($cur.permissions.allow) + @($src.permissions.allow) | Select-Object -Unique
 $cur.permissions.allow = $allow
+# The permission mode is the framework's too (owner decision, 2026-09-13):
+# auto mode tells agents to change files with heredocs, which the heredoc
+# guard then refuses; acceptEdits does not. Set, not merged.
+if ($src.permissions.PSObject.Properties["defaultMode"]) {
+  if ($cur.permissions.PSObject.Properties["defaultMode"]) { $cur.permissions.defaultMode = $src.permissions.defaultMode }
+  else { $cur.permissions | Add-Member -NotePropertyName defaultMode -NotePropertyValue $src.permissions.defaultMode }
+}
 # Hooks: the framework's SessionStart/Stop entries (pull and push the framework
 # and the skills when safe). Appended, never replacing what the profile has;
 # an entry whose command is already present is not added twice, so re-running
