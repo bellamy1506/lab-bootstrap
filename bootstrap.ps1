@@ -65,14 +65,6 @@ $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [En
 if (-not (Have gh)) { $env:Path += ";C:\Program Files\GitHub CLI" }
 foreach ($c in @("git", "gh", "python")) { if (-not (Have $c)) { throw "$c still not on PATH after install; open a new terminal and re-run." } }
 
-# ---- 1b. the runners the framework's gates call ---------------------------
-# The first machine bootstrapped without these (2026-09-11) had no pytest and
-# no ruff: accept.py could verify nothing and the per-write lint hook was
-# inert. Both are what every card's Done-when names.
-Step "python runners (pytest, ruff)"
-python -m pip install --quiet --user pytest ruff
-if ($LASTEXITCODE -ne 0) { throw "pip could not install pytest and ruff; install them by hand and re-run." }
-
 # ---- 2. GitHub login (browser; nothing typed here) -------------------------
 Step "github login"
 gh auth status 2>$null | Out-Null
@@ -99,6 +91,18 @@ if ($FrameworkRef -ne "master") {
 }
 Write-Host "    lab-framework at $(git -C $fw rev-parse --short HEAD)"
 git -C $fw config core.hooksPath .githooks
+
+# ---- 3b. every runtime the framework's mechanisms and skills need ----------
+# Declared once in lab-framework/.claude/runtimes.json; setup.py probes each,
+# runs the pip installs and prints the winget lines it does not run. The
+# first machine bootstrapped without pytest and ruff (2026-09-11) and its
+# gates verified nothing; the install line lived here, a second copy of a
+# fact the framework owns, until 2026-09-13.
+Step "runtimes (python scripts/setup.py --fix)"
+$eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+python (Join-Path $fw "scripts/setup.py") --fix 2>&1 | ForEach-Object { "    $_" }
+if ($LASTEXITCODE -ne 0) { Write-Host "    a runtime is still missing - see the lines above" -ForegroundColor Yellow }
+$ErrorActionPreference = $eap
 $repoPy = Join-Path $fw "scripts\repo.py"
 # home prints "git clone URL TARGET" lines with ~ paths; run each not yet present.
 $lines = python $repoPy home | Where-Object { $_ -like "git clone *" }

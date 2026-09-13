@@ -32,11 +32,12 @@ With a lab run:
 1. Installs Git, GitHub CLI and Python 3.12 with winget (skips what exists;
    any Python 3.10 or newer already on PATH is used as it is, and each run
    gets its own `.venv` with pytest and ruff, so the machine's Python only
-   has to exist),
-   then pytest and ruff with pip - the framework's gates call both, and a
-   machine without them accepts no card and lints no write.
+   has to exist).
 2. `gh auth login --web` - the browser click - and wires git to it.
-3. Clones `lab-framework`, then every other repository by its category
+3. Clones `lab-framework` and runs its `scripts/setup.py --fix`: every
+   runtime the framework's gates and skills need is declared once in
+   `.claude/runtimes.json`; the pip installs run, the winget lines are
+   printed for you. Then every other repository by its category
    (`python scripts/repo.py home` decides where): skills into
    `~/.claude/skills/`, everything else into `~/projects/`.
 4. Installs the user-level Claude pieces from `lab-framework/claude-home/`:
