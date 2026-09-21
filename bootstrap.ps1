@@ -40,7 +40,8 @@
 param(
   [string]$Lab = "",
   [string]$Root = "",
-  [string]$FrameworkRef = $(if ($env:LAB_FRAMEWORK_REF) { $env:LAB_FRAMEWORK_REF } else { "master" })
+  [string]$FrameworkRef = $(if ($env:LAB_FRAMEWORK_REF) { $env:LAB_FRAMEWORK_REF } else { "master" }),
+  [switch]$SelfTest
 )
 $ErrorActionPreference = "Stop"
 $Account = "bellamy1506"
@@ -97,11 +98,18 @@ if ($LASTEXITCODE -ne 0) {
   # scheduled task) nothing can click it and the script hangs forever
   # (council c4 round 1, powershell role, finding 2). Fail with one line
   # instead of hanging when this session cannot supply that click.
-  if ([Console]::IsInputRedirected) {
-    throw "gh is not logged in, and this session's input is redirected: 'gh auth login --web' would wait for a browser click that cannot happen here. Run 'gh auth login --web' by hand in an interactive terminal, then re-run this script."
+  # A headless machine (council c4, 2026-09-20; owner's answer, C4 item 1):
+  # `GH_TOKEN` in the environment is honoured by every gh call, so a token the
+  # owner places there (never in a repository) lets an unattended run finish.
+  # With no token and no console, the failure below is clear and immediate.
+  if ($env:GH_TOKEN) {
+    Write-Host "    gh: using GH_TOKEN from the environment" -ForegroundColor Yellow
+  } elseif ([Console]::IsInputRedirected) {
+    throw "gh is not logged in, and this session's input is redirected: 'gh auth login --web' would wait for a browser click that cannot happen here. Run 'gh auth login --web' by hand in an interactive terminal, or set GH_TOKEN in the environment (the owner's secret, never in a repository), then re-run this script."
+  } else {
+    gh auth login --hostname github.com --git-protocol https --web
+    if ($LASTEXITCODE -ne 0) { throw "gh auth login did not complete." }
   }
-  gh auth login --hostname github.com --git-protocol https --web
-  if ($LASTEXITCODE -ne 0) { throw "gh auth login did not complete." }
 }
 gh auth setup-git | Out-Null
 $who = gh api user --jq .login
@@ -162,7 +170,14 @@ foreach ($ln in $lines) {
     }
     Step "  clone $url -> $target"
     New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
-    git clone -q $url $target
+    if ($url -like "*/lab-records.git") {
+      # 42 MiB of 47 on a new machine, almost all retired tree/ copies
+      # (council c4; owner's answer, C4 item 3): blobs are fetched on first
+      # read, the router's SOURCES rule over lab-records/*/tree/ unchanged.
+      git clone -q --filter=blob:none $url $target
+    } else {
+      git clone -q $url $target
+    }
     if (Test-Path (Join-Path $target ".githooks")) { git -C $target config core.hooksPath .githooks }
   }
 }
@@ -231,11 +246,19 @@ if (-not (Test-Path $vaultScript)) {
 # from a native command piped through 2>&1 into a terminating error; the
 # test's harmless "NOTE: ..." killed the script before step 5 (2026-09-12).
 # Continue for this one call; the exit code is the verdict.
-Step "framework self-test (python tests/framework/test_hooks.py)"
-$eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-python (Join-Path $fw "tests\framework\test_hooks.py") 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 1
-if ($LASTEXITCODE -ne 0) { Write-Host "    self-test exit $LASTEXITCODE - look at the output above" -ForegroundColor Yellow }
-$ErrorActionPreference = $eap
+# 26 s of a 30 s run (council c4; owner's answer, C4 item 2): run it on the
+# first bootstrap of a root (no stamp yet) or when -SelfTest is passed.
+$stamp = Join-Path $ClaudeDir ".bootstrap-selftest"
+if ($SelfTest -or -not (Test-Path $stamp)) {
+  Step "framework self-test (python tests/framework/test_hooks.py)"
+  $eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+  python (Join-Path $fw "tests\framework\test_hooks.py") 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 1
+  if ($LASTEXITCODE -ne 0) { Write-Host "    self-test exit $LASTEXITCODE - look at the output above" -ForegroundColor Yellow }
+  else { Set-Content -Path $stamp -Value (Get-Date -Format s) -Encoding ascii }
+  $ErrorActionPreference = $eap
+} else {
+  Step "framework self-test skipped (ran before; pass -SelfTest to run it again)"
+}
 
 # ---- 5. optional: a lab run ------------------------------------------------
 if ($Lab -ne "") {
