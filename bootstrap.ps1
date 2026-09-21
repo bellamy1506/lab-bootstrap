@@ -25,7 +25,11 @@
   A tag or commit of lab-framework to check out instead of master, so one
   bad push cannot break every future bootstrap. Default master, because
   pull-when-you-start is the owner's workflow; pin when handing the
-  sentence to a machine that must match a known state.
+  sentence to a machine that must match a known state. Set
+  $env:LAB_FRAMEWORK_REF once (a machine's own environment variable, e.g.
+  in its PowerShell profile) to change the default without editing this
+  file or typing -FrameworkRef every time; the flag still wins when given
+  (council c4, round 2).
 
 .EXAMPLE
   irm https://raw.githubusercontent.com/bellamy1506/lab-bootstrap/master/bootstrap.ps1 | iex
@@ -36,7 +40,7 @@
 param(
   [string]$Lab = "",
   [string]$Root = "",
-  [string]$FrameworkRef = "master"
+  [string]$FrameworkRef = $(if ($env:LAB_FRAMEWORK_REF) { $env:LAB_FRAMEWORK_REF } else { "master" })
 )
 $ErrorActionPreference = "Stop"
 $Account = "bellamy1506"
@@ -52,23 +56,50 @@ function Have($cmd) { $null -ne (Get-Command $cmd -ErrorAction SilentlyContinue)
 
 # ---- 1. tools -------------------------------------------------------------
 Step "tools"
+# Refresh from the Machine/User registry PATH before deciding what is
+# missing, not only after installing. A caller whose own shell PATH is
+# stripped or stale (a minimal CI runner, a scheduled task, a remote
+# session) but whose machine already has git/gh/python registered would
+# otherwise have this step call winget anyway, for a tool that is already
+# there (council c4 round 3, robustness role, finding 3).
+$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 $need = @()
 if (-not (Have git))    { $need += "Git.Git" }
 if (-not (Have gh) -and -not (Test-Path "C:\Program Files\GitHub CLI\gh.exe")) { $need += "GitHub.cli" }
 if (-not (Have python)) { $need += "Python.Python.3.12" }
 foreach ($id in $need) {
   Step "  winget install $id"
-  winget install --id $id --exact --silent --accept-package-agreements --accept-source-agreements | Out-Null
+  winget install --id $id --exact --silent --accept-package-agreements --accept-source-agreements
+  if ($LASTEXITCODE -ne 0) { Write-Host "    winget exit $LASTEXITCODE installing $id - see the lines above" -ForegroundColor Yellow }
 }
 # A fresh install is not on this shell's PATH yet.
 $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not (Have gh)) { $env:Path += ";C:\Program Files\GitHub CLI" }
-foreach ($c in @("git", "gh", "python")) { if (-not (Have $c)) { throw "$c still not on PATH after install; open a new terminal and re-run." } }
+foreach ($c in @("git", "gh", "python")) { if (-not (Have $c)) { throw "$c still not on PATH after install; open a new terminal and re-run. If winget reported a failure above, that is the real cause." } }
 
 # ---- 2. GitHub login (browser; nothing typed here) -------------------------
 Step "github login"
+# `2>$null` on a native command makes PowerShell 5.1 wrap gh's stderr line
+# (which gh writes even when reporting "not logged in", or on a network
+# failure) into a terminating ErrorRecord under $ErrorActionPreference =
+# "Stop" - the same class this file already documents at the self-test step
+# below. Left unguarded, that throw fires before the $LASTEXITCODE check on
+# the next line ever runs, so the closed-stdin guard two lines down (council
+# c4 round 1/2) is unreachable: a not-logged-in or offline machine crashes
+# here with a raw exception instead of reaching either the guard or the
+# login flow (council c4 round 3, robustness role, finding 1).
+$eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
 gh auth status 2>$null | Out-Null
+$ErrorActionPreference = $eap
 if ($LASTEXITCODE -ne 0) {
+  # `gh auth login --web` prints a one-time code and a URL, then waits for
+  # the browser click; under closed/redirected stdin (an agent harness, a
+  # scheduled task) nothing can click it and the script hangs forever
+  # (council c4 round 1, powershell role, finding 2). Fail with one line
+  # instead of hanging when this session cannot supply that click.
+  if ([Console]::IsInputRedirected) {
+    throw "gh is not logged in, and this session's input is redirected: 'gh auth login --web' would wait for a browser click that cannot happen here. Run 'gh auth login --web' by hand in an interactive terminal, then re-run this script."
+  }
   gh auth login --hostname github.com --git-protocol https --web
   if ($LASTEXITCODE -ne 0) { throw "gh auth login did not complete." }
 }
@@ -82,12 +113,22 @@ New-Item -ItemType Directory -Force $Projects | Out-Null
 $fw = Join-Path $Projects $Framework
 if (-not (Test-Path (Join-Path $fw ".git"))) {
   git clone -q "https://github.com/$Account/$Framework.git" $fw
+  if ($LASTEXITCODE -ne 0) { throw "git clone of $Framework into $fw failed; see the git error above. Delete $fw and re-run." }
+} else {
+  # `Test-Path .git` only proves a clone was started, not that it finished.
+  # An earlier run killed mid-clone (or mid-checkout) leaves a `.git` folder
+  # behind; without this check that broken folder is treated as done forever
+  # and every later step blames the wrong cause (council c4 round 3,
+  # robustness role, finding 2).
+  git -C $fw rev-parse HEAD | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "$fw has a .git folder but is not a complete clone (an earlier run may have been interrupted). Delete $fw and re-run." }
 }
 if ($FrameworkRef -ne "master") {
   Step "  framework pinned to $FrameworkRef"
   git -C $fw fetch -q --tags
-  git -C $fw checkout -q $FrameworkRef
-  if ($LASTEXITCODE -ne 0) { throw "lab-framework has no ref '$FrameworkRef'." }
+  if ($LASTEXITCODE -ne 0) { throw "fetching tags for lab-framework failed (network or remote problem); see the git error above." }
+  $eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"; $checkoutErr = git -C $fw checkout -q $FrameworkRef 2>&1; $ErrorActionPreference = $eap
+  if ($LASTEXITCODE -ne 0) { throw "lab-framework checkout of '$FrameworkRef' failed (no such ref, uncommitted local changes, or a path over 260 characters - council c4 stress round) - git said: $checkoutErr" }
 }
 Write-Host "    lab-framework at $(git -C $fw rev-parse --short HEAD)"
 git -C $fw config core.hooksPath .githooks
@@ -160,7 +201,27 @@ if ($src.PSObject.Properties["hooks"]) {
     }
   }
 }
-$cur | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding utf8
+# `Set-Content -Encoding utf8` writes a UTF-8 byte-order mark in Windows
+# PowerShell 5.1, which a plain `utf-8` reader (Python's json.loads, most
+# non-.NET tools) refuses. Write without one instead (council c4 round 1,
+# profile role, finding 3).
+$json = $cur | ConvertTo-Json -Depth 10
+[System.IO.File]::WriteAllText($settingsPath, $json, (New-Object System.Text.UTF8Encoding $false))
+
+# ---- 4a. the vault (Obsidian config, the skills junction) ------------------
+# Guarded: a lab-framework ref checked out before scripts/vault_install.py
+# existed there must not fail the whole bootstrap over a step it cannot yet
+# run (council c4 round 1, powershell role, proposal 1).
+Step "vault (python scripts/vault_install.py)"
+$vaultScript = Join-Path $fw "scripts/vault_install.py"
+if (-not (Test-Path $vaultScript)) {
+  Write-Host "    skipped: this lab-framework ref has no scripts/vault_install.py yet" -ForegroundColor Yellow
+} else {
+  $eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+  python $vaultScript --projects $Projects --skills $Skills 2>&1 | ForEach-Object { "    $_" }
+  if ($LASTEXITCODE -ne 0) { Write-Host "    vault_install.py exit $LASTEXITCODE - see the lines above" -ForegroundColor Yellow }
+  $ErrorActionPreference = $eap
+}
 
 # ---- 4b. prove the guards fire ---------------------------------------------
 # ADOPTION step 9: a guard nobody has seen refuse is not yet a guard. The
