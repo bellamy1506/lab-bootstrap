@@ -187,8 +187,14 @@ Step "claude home"
 New-Item -ItemType Directory -Force $ClaudeDir | Out-Null
 Copy-Item (Join-Path $fw "claude-home\CLAUDE.md") (Join-Path $ClaudeDir "CLAUDE.md") -Force
 $settingsPath = Join-Path $ClaudeDir "settings.json"
-$src = Get-Content (Join-Path $fw "claude-home\settings.json") -Raw | ConvertFrom-Json
-if (Test-Path $settingsPath) { $cur = Get-Content $settingsPath -Raw | ConvertFrom-Json } else { $cur = [pscustomobject]@{} }
+# A malformed file names itself (council C4 carried, 2026-09-20: a bare
+# ConvertFrom-Json failed loudly but said nothing of which file to fix).
+function Read-JsonFile([string]$path) {
+  try { return Get-Content $path -Raw | ConvertFrom-Json -ErrorAction Stop }
+  catch { throw "$path is not valid JSON - fix or remove it, then run the bootstrap again: $($_.Exception.Message)" }
+}
+$src = Read-JsonFile (Join-Path $fw "claude-home\settings.json")
+if (Test-Path $settingsPath) { $cur = Read-JsonFile $settingsPath } else { $cur = [pscustomobject]@{} }
 if (-not $cur.PSObject.Properties["permissions"]) { $cur | Add-Member -NotePropertyName permissions -NotePropertyValue ([pscustomobject]@{}) }
 if (-not $cur.permissions.PSObject.Properties["allow"]) { $cur.permissions | Add-Member -NotePropertyName allow -NotePropertyValue @() }
 $allow = @($cur.permissions.allow) + @($src.permissions.allow) | Select-Object -Unique
